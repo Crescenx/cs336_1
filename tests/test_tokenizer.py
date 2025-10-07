@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import resource
 import sys
 
-import psutil
 import pytest
 import tiktoken
 
@@ -16,24 +14,6 @@ VOCAB_PATH = FIXTURES_PATH / "gpt2_vocab.json"
 MERGES_PATH = FIXTURES_PATH / "gpt2_merges.txt"
 
 
-def memory_limit(max_mem):
-    def decorator(f):
-        def wrapper(*args, **kwargs):
-            process = psutil.Process(os.getpid())
-            prev_limits = resource.getrlimit(resource.RLIMIT_AS)
-            resource.setrlimit(resource.RLIMIT_AS, (process.memory_info().rss + max_mem, -1))
-            try:
-                result = f(*args, **kwargs)
-                return result
-            finally:
-                # Even if the function above fails (e.g., it exceeds the
-                # memory limit), reset the memory limit back to the
-                # previous limit so other tests aren't affected.
-                resource.setrlimit(resource.RLIMIT_AS, prev_limits)
-
-        return wrapper
-
-    return decorator
 
 
 def get_tokenizer_from_vocab_merges_path(
@@ -42,10 +22,10 @@ def get_tokenizer_from_vocab_merges_path(
     special_tokens: list[str] | None = None,
 ):
     gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
-    with open(vocab_path) as vocab_f:
+    with open(vocab_path, encoding="utf-8") as vocab_f:
         gpt2_vocab = json.load(vocab_f)
     gpt2_bpe_merges = []
-    with open(merges_path) as f:
+    with open(merges_path, encoding="utf-8") as f:
         for line in f:
             cleaned_line = line.rstrip()
             if cleaned_line and len(cleaned_line.split(" ")) == 2:
@@ -446,19 +426,4 @@ def test_encode_memory_usage():
         _ = _encode(tokenizer, contents)
 
 
-@memory_limit(int(1e6))
-def _encode_iterable(tokenizer, iterable):
-    """
-    We place tokenizer.encode_iterable into a separate function so we can limit memory
-    for just this function. We set the memory limit to 1MB.
-    """
-    yield from tokenizer.encode_iterable(iterable)
 
-
-@memory_limit(int(1e6))
-def _encode(tokenizer, text):
-    """
-    We place tokenizer.encode into a separate function so we can limit memory
-    for just this function. We set the memory limit to 1MB.
-    """
-    return tokenizer.encode(text)

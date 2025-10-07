@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from collections import Counter
 from typing import IO, Any, BinaryIO
 
 import numpy.typing as npt
 import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
+
+from bpe_impl.bpe_train import train_bpe
+from tokenizer.tokenizer import Tokenizer
 
 
 def run_linear(
@@ -559,7 +563,9 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    return Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
+
+
 
 
 def run_train_bpe(
@@ -589,4 +595,9 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    raise NotImplementedError
+    return train_bpe(
+        input_path=input_path,
+        vocab_size=vocab_size,
+        special_tokens=special_tokens,
+        **kwargs,
+    )
