@@ -1,9 +1,12 @@
 from collections import deque
 import os
 import pickle
+import ahocorasick
 
 from typing import Iterable, Iterator
 import regex as re
+
+from .linkedsq import LinkedSeq
 
 GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -23,18 +26,15 @@ class Tokenizer:
         self.token_merges = token_merges
         self.merges_rank = { (a, b): i for i, (a, b, _) in enumerate(token_merges) }
 
-        self._compile_patterns()
-        
-    def _compile_patterns(self):
-        special_sorted = sorted(self.special_tokens, key=len, reverse=True)
-        self._special_alt = "|".join(re.escape(t) for t in special_sorted) if special_sorted else None
+        # Precompile the regex for pre-tokenization
+        self.gpt2_re = re.compile(GPT2_PAT)
 
-        if self._special_alt:
-            pat = rf"({self._special_alt})|({GPT2_PAT})"
-        else:
-            pat = rf"({GPT2_PAT})"
-
-        self._pretoken_re = re.compile(pat)
+        # Create the Aho-Corasick automaton for special tokens
+        if self.special_tokens:
+            self._spec_automaton = ahocorasick.Automaton()
+            for token in self.special_tokens:
+                self._spec_automaton.add_word(token, token)
+            self._spec_automaton.make_automaton()
 
     @classmethod
     def from_files(cls, vocab_path: str | os.PathLike, merges_path: str | os.PathLike, special_tokens: list[str] | None = None) -> "Tokenizer":
@@ -45,107 +45,48 @@ class Tokenizer:
 
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
     
-    class LinkedSeq:
-        __slots__ = ("val", "left", "right", "alive", "_head")
 
-        def __init__(self, tokens: Iterable[int]):
-            vals = list(tokens)
-            n = len(vals)
-            self.val = vals
-            self.left = [-1] + [i for i in range(n - 1)]
-            self.right = [i+1 for i in range(n - 1)] + [-1]
-            self.alive = [True] * n
-            self._head = 0 if n > 0 else -1
-
-        def is_valid(self, idx: int) -> bool:
-            return 0 <= idx < len(self.val) and self.alive[idx]
-        def get_head(self) -> int:
-            return self._head
-        def left_of(self, idx: int) -> int:
-            return self.left[idx] if self.is_valid(idx) else -1
-        def right_of(self, idx: int) -> int:
-            return self.right[idx] if self.is_valid(idx) else -1
-        def get(self, idx: int) -> int:
-            return self.val[idx]
-        def set(self, idx: int, value: int) -> None:
-            self.val[idx] = value
-
-        def remove(self, idx: int) -> tuple[int, int]:
-            if not self.is_valid(idx):
-                return -1, -1
-            left_idx = self.left[idx]
-            right_idx = self.right[idx]
-
-            if left_idx != -1:
-                self.right[left_idx] = right_idx
-            if right_idx != -1:
-                self.left[right_idx] = left_idx
-            if idx == self._head:
-                self._head = right_idx
-
-            self.alive[idx] = False
-            self.left[idx] = -1
-            self.right[idx] = -1
-            return left_idx, right_idx
-    
-        def pair_at(self, idx: int) -> tuple[int, int, int, int] | None:
-            if not self.is_valid(idx):
-                return None
-            right_idx = self.right_of(idx)
-            if right_idx == -1 or not self.is_valid(right_idx):
-                return None
-            return (idx, right_idx, self.get(idx), self.get(right_idx))
-    
-        def __iter__(self):
-            idx = self.get_head()
-            while idx != -1:
-                yield idx, self.get(idx)
-                idx = self.right_of(idx)
         
-        def to_list(self) -> list[int]:
-            return [val for _, val in self]
+    def split(self, text: str) -> Iterator[tuple[str, bool]]:
+        last_idx = 0
+
+        if self.special_tokens:
+            for end_idx, spec_token in self._spec_automaton.iter_long(text):
+                start_idx = end_idx - len(spec_token) + 1
+                if start_idx > last_idx:
+                    normal_piece = text[last_idx:start_idx]
+                    for m in self.gpt2_re.finditer(normal_piece):
+                        yield m.group(0), False
+
+                yield spec_token, True
+                last_idx = end_idx + 1
         
-    def _get_block_from_match(self, m: re.Match) -> list[int] | None:
-        if m.start() == m.end():
-            return None
+        if last_idx < len(text):
+            normal_piece = text[last_idx:]
+            for m in self.gpt2_re.finditer(normal_piece):
+                yield m.group(0), False
 
-        if self._special_alt:
-            special_str = m.group(1)
-            piece_str = m.group(2)
-        else:
-            special_str = None
-            piece_str = m.group(1)
-
-        if special_str is not None:
-            special_bytes = special_str.encode("utf-8")
-            if special_bytes in self.reverse_vocab:
-                return [self.reverse_vocab[special_bytes]]
+    def _get_piece(self, piece: str, is_special: bool) -> list[int]:
+        if is_special:
+            token_id = self.reverse_vocab.get(piece.encode("utf-8"))
+            if token_id is not None:
+                return [token_id]
             else:
-                return None
-        elif piece_str is not None:
-            piece_bytes = piece_str.encode("utf-8")
-            block = [
-                self.reverse_vocab[bytes([b])]
-                for b in piece_bytes
-                if bytes([b]) in self.reverse_vocab
-            ]
-        return None
-        
-    def _pre_tokenize(self, text: str) -> list[list[int]]:
-        blocks = []
+                return []
+        else:
+            piece_bytes = piece.encode("utf-8")
+            token_ids = []
+            for byte in piece_bytes:
+                token_id = self.reverse_vocab.get(bytes([byte]))
+                if token_id is not None:
+                    token_ids.append(token_id)
+            return token_ids
 
-        for m in self._pretoken_re.finditer(text):
-            block = self._get_block_from_match(m)
-            if block:
-                blocks.append(block)
-        return blocks
-    
-
-    def _merge_block(self, token_ids: list[int]) -> list[int]:
+    def _merge_piece(self, token_ids: list[int]) -> list[int]:
         if len(token_ids) < 2 or not self.token_merges:
             return token_ids
 
-        seq = self.LinkedSeq(token_ids)
+        seq = LinkedSeq(token_ids)
 
         RMAX = len(self.token_merges) - 1
         buckets = [deque() for _ in range(RMAX + 1)]
@@ -194,48 +135,42 @@ class Tokenizer:
             
         return seq.to_list()
     
+    def _tid_generator_from_splits(self, splt:tuple[list[int],bool]) -> Iterator[int]:
+        piece, is_special = splt
+        token_ids = self._get_piece(piece, is_special)
+        merged_ids = self._merge_piece(token_ids)
+        for tid in merged_ids:
+            yield tid
+    
     def encode(self, text: str) -> list[int]:
-        pretokenized_blocks = self._pre_tokenize(text)
-        output = []
-        for block in pretokenized_blocks:
-            merged = self._merge_block(block)
-            output.extend(merged)
-
-        return output
+        all_ids = []
+        for splt in self.split(text):
+            for tid in self._tid_generator_from_splits(splt):
+                all_ids.append(tid)
+        return all_ids
+        
+        
     
     def encode_iterable(self, text: Iterable[str]) -> Iterator[int]:
-        tail = ""
-        max_special_len = max((len(s) for s in self.special_tokens), default=0)
-        window = max(1, max_special_len) 
-
+        buf = ""
         for chunk in text:
-            if not chunk:
+            buf += chunk
+            
+            splts = list(self.split(buf))
+            if len(splts) < 2:
                 continue
 
-            buf = tail + chunk
-            cutoff = max(0, len(buf) - window)
-            last_processed_end = 0
+            safe_splits = splts[:-1]
+            for splt in safe_splits:
+                yield from self._tid_generator_from_splits(splt)
 
-            for m in self._pretoken_re.finditer(buf):
-                if m.end() > cutoff:
-                    # This match extends into the unsafe region. Stop processing here
-                    # and keep the rest of the buffer for the next chunk.
-                    tail = buf[last_processed_end:]
-                    break
+            buf = splts[-1][0] if splts else ""
+        if buf:
+            splts = list(self.split(buf))
+            for splt in splts:
+                yield from self._tid_generator_from_splits(splt)
 
-                if (block := self._get_block_from_match(m)) is not None:
-                    yield from self._merge_block(block)
-                
-                last_processed_end = m.end()
-            else:
-                # All matches were safely processed. The new tail is what's left.
-                tail = buf[last_processed_end:]
-                
-        # After the loop, process any remaining text in the tail.
-        if tail:
-            for m in self._pretoken_re.finditer(tail):
-                if (block := self._get_block_from_match(m)) is not None:
-                    yield from self._merge_block(block)
+
 
     def decode(self, ids: list[int]) -> str:
         buf = bytearray()

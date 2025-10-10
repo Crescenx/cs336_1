@@ -21,6 +21,7 @@ dependencies = [
     "ty>=0.0.1a16",
     "maturin>=1.9.4",
     "scalene>=1.5.55",
+    "pyahocorasick>=2.2.0",
 ]
 
 [build-system]
