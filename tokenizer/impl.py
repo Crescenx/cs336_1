@@ -2,11 +2,12 @@ from collections import deque
 import os
 import pickle
 import ahocorasick
+import heapq
 
 from typing import Iterable, Iterator
 import regex as re
 
-from .linkedsq import LinkedSeq
+from tokenizer.linkedsq import LinkedSeq
 
 GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -63,8 +64,8 @@ class Tokenizer:
         
         if last_idx < len(text):
             normal_piece = text[last_idx:]
-            for m in self.gpt2_re.finditer(normal_piece):
-                yield m.group(0), False
+            for m in self.gpt2_re.findall(normal_piece):
+                yield m, False
 
     def _get_piece(self, piece: str, is_special: bool) -> list[int]:
         if is_special:
@@ -88,10 +89,23 @@ class Tokenizer:
 
         seq = LinkedSeq(token_ids)
 
-        RMAX = len(self.token_merges) - 1
-        buckets = [deque() for _ in range(RMAX + 1)]
+        queues: dict[int, deque[int]] = {}
+        active_ranks: list[int] = []
+        in_heap: set[int] = set()
 
-        def try_push(i: int):
+        def get_queue(rank: int) -> deque[int]:
+            q = queues.get(rank)
+            if q is None:
+                q = deque()
+                queues[rank] = q
+            return q
+        
+        def activate_rank(rank: int):
+            if rank not in in_heap:
+                in_heap.add(rank)
+                heapq.heappush(active_ranks, rank)
+
+        def try_push(i: int, curr_rank: int | None = None):
             if not seq.is_valid(i):
                 return
             
@@ -104,16 +118,28 @@ class Tokenizer:
                 return
             
             rank = self.merges_rank.get((a_val, b_val))
-            if rank is not None:
-                buckets[rank].append(a_idx)
+            if rank is None:
+                return
+            
+            if curr_rank is not None and rank == curr_rank:
+                queues[rank].append(i) # Re-add to the same queue for immediate processing
+            else:
+                get_queue(rank).append(i)
+                activate_rank(rank)
 
         # Initialize buckets
         for i, _ in seq:
             try_push(i)
 
         # Clean the buckets and perform merges
-        for rank, q in enumerate(buckets):
-            a_rule, b_rule, after = self.token_merges[rank]
+        while active_ranks:
+            curr_rank = heapq.heappop(active_ranks)
+            in_heap.discard(curr_rank)
+            q = get_queue(curr_rank)
+            if not q:
+                continue
+
+            a_rule, b_rule, after = self.token_merges[curr_rank]
             while q:
                 i = q.popleft()
 
@@ -130,9 +156,10 @@ class Tokenizer:
                 # Re-evaluate pairs around the merged token
                 la_idx = seq.left_of(x_idx)
                 if seq.is_valid(la_idx):
-                    try_push(la_idx) # (la,x)
-                try_push(x_idx)    # (x,rb)
+                    try_push(la_idx, curr_rank) # (la,x)
+                try_push(x_idx, curr_rank)    # (x,rb)
             
+            del queues[curr_rank]
         return seq.to_list()
     
     def _tid_generator_from_splits(self, splt:tuple[list[int],bool]) -> Iterator[int]:

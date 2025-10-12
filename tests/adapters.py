@@ -11,7 +11,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from bpe_impl.bpe_train import train_bpe
-from tokenizer.tokenizer import Tokenizer
+from tokenizer.impl import Tokenizer
 
 
 def run_linear(
