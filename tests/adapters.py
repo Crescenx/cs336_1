@@ -16,6 +16,9 @@ from linear.impl import Linear
 from embedding.impl import Embedding
 from transformer.rmsnorm import RMSNorm
 from transformer.swiglu import SwiGLU, SiLU
+from transformer.rope import RoPE
+from transformer.attn import scaled_dot_product_attn, MultiHeadSelfAttention
+from transformer.block import TransformerBlock
 
 import torch
 import torch.nn as nn
@@ -93,9 +96,9 @@ def run_swiglu(
     """
     swiglu = SwiGLU(d_model, d_ff)
     nn.Module.load_state_dict(swiglu, {
-        'W1': w1_weight,
-        'W2': w2_weight,
-        'W3': w3_weight,
+        'W1.W': w1_weight,
+        'W2.W': w2_weight,
+        'W3.W': w3_weight,
     })
 
     return swiglu(in_features)
@@ -119,7 +122,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    return scaled_dot_product_attn(Q, K, V, mask)
 
 
 def run_multihead_self_attention(
@@ -153,7 +156,15 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    mha = MultiHeadSelfAttention(d_model, num_heads)
+    nn.Module.load_state_dict(mha, {
+        'W_q': q_proj_weight,
+        'W_k': k_proj_weight,
+        'W_v': v_proj_weight,
+        'W_o': o_proj_weight,
+    })
+
+    return mha(in_features, causual=True)
 
 
 def run_multihead_self_attention_with_rope(
@@ -193,7 +204,16 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    rope = RoPE(theta=theta, d_k=d_model // num_heads, max_seq_len=max_seq_len, device=in_features.device)
+    mha = MultiHeadSelfAttention(d_model, num_heads, rope=rope)
+    nn.Module.load_state_dict(mha, {
+        'W_q': q_proj_weight,
+        'W_k': k_proj_weight,
+        'W_v': v_proj_weight,
+        'W_o': o_proj_weight,
+    })
+
+    return mha(in_features, causal=True)
 
 
 def run_rope(
@@ -215,7 +235,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    raise NotImplementedError
+    rope = RoPE(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
+    return rope(in_query_or_key, token_positions)
 
 
 def run_transformer_block(
@@ -288,7 +309,17 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    block = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta)
+    block.attn.W_k = torch.nn.Parameter(weights['attn.k_proj.weight'])
+    block.attn.W_q = torch.nn.Parameter(weights['attn.q_proj.weight'])
+    block.attn.W_v = torch.nn.Parameter(weights['attn.v_proj.weight'])
+    block.attn.W_o = torch.nn.Parameter(weights['attn.output_proj.weight'])
+    block.norm1.gain = torch.nn.Parameter(weights['ln1.weight'])
+    block.ff.W1.W = torch.nn.Parameter(weights['ffn.w1.weight'])
+    block.ff.W2.W = torch.nn.Parameter(weights['ffn.w2.weight'])
+    block.ff.W3.W = torch.nn.Parameter(weights['ffn.w3.weight'])
+    block.norm2.gain = torch.nn.Parameter(weights['ln2.weight'])
+    return block(in_features)
 
 
 def run_transformer_lm(
