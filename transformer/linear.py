@@ -8,11 +8,11 @@ class Linear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         
-        self.W = nn.Parameter(torch.empty((out_features, in_features), device=device, dtype=dtype))
+        self.weight = nn.Parameter(torch.empty((out_features, in_features), device=device, dtype=dtype))
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        nn.init.trunc_normal_(self.W, std=0.02)
+        nn.init.trunc_normal_(self.weight, std=0.02)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return einx.dot("... in , out in-> ... out", x, self.W)
+        return einx.dot("... in , out in-> ... out", x, self.weight)

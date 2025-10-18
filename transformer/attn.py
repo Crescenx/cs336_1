@@ -44,23 +44,23 @@ class MultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.d_k = d_model // num_heads
 
-        self.W_q = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
-        self.W_k = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
-        self.W_v = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
-        self.W_o = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.q_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.k_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.v_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.output_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
         self.rope = rope
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        nn.init.trunc_normal_(self.W_q, std=0.02)
-        nn.init.trunc_normal_(self.W_k, std=0.02)
-        nn.init.trunc_normal_(self.W_v, std=0.02)
-        nn.init.trunc_normal_(self.W_o, std=0.02)
+        nn.init.trunc_normal_(self.q_proj, std=0.02)
+        nn.init.trunc_normal_(self.k_proj, std=0.02)
+        nn.init.trunc_normal_(self.v_proj, std=0.02)
+        nn.init.trunc_normal_(self.output_proj, std=0.02)
 
     def forward(self, x: torch.Tensor, causual: bool=False) -> torch.Tensor:
         seq_len = x.shape[-2]
-        
-        W_qkv = torch.stack((self.W_q, self.W_k, self.W_v), dim=0) # (3, d_model, d_model)
+
+        W_qkv = torch.stack((self.q_proj, self.k_proj, self.v_proj), dim=0) # (3, d_model, d_model)
         QKV = einx.rearrange(
             "... seq_len three (h d_k) -> ... three h seq_len d_k",
             einx.dot("... seq_len d_model, three hd_k d_model -> ... seq_len three hd_k", x, W_qkv),
@@ -80,6 +80,6 @@ class MultiHeadSelfAttention(nn.Module):
             mask = torch.ones(1, 1, seq_len, seq_len, dtype=torch.bool, device=x.device).tril()
             out = scaled_dot_product_attn(Q, K, V, mask=mask)
         out = einx.rearrange("... num_heads seq_len d_k -> ... seq_len (num_heads d_k)", out)
-        out = einx.dot("... seq_len d_v, d_model d_v -> ... seq_len d_model", out, self.W_o)
+        out = einx.dot("... seq_len d_v, d_model d_v -> ... seq_len d_model", out, self.output_proj)
         return out
         

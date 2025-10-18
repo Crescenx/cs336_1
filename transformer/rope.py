@@ -9,7 +9,7 @@ class RoPE(nn.Module):
         positions = torch.arange(max_seq_len, dtype=torch.float32)
         freqs_exp = torch.arange(0, d_k, 2, dtype=torch.float32) / d_k
         inv_freqs = 1.0 / (theta ** freqs_exp)
-        theta_matrix = torch.einsum("i,j->i j", positions, inv_freqs)
+        theta_matrix = einx.multiply("i,j->i j", positions, inv_freqs)
         self.register_buffer("cos_cached", torch.cos(theta_matrix).to(device), persistent=False) # (max_seq_len, d_k/2)
         self.register_buffer("sin_cached", torch.sin(theta_matrix).to(device), persistent=False) # (max_seq_len, d_k/2)
 

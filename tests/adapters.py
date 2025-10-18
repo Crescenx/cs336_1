@@ -12,13 +12,14 @@ from torch import Tensor
 
 from bpe_impl.bpe_train import train_bpe
 from tokenizer.impl import Tokenizer
-from linear.impl import Linear
-from embedding.impl import Embedding
+
 from transformer.rmsnorm import RMSNorm
 from transformer.swiglu import SwiGLU, SiLU
 from transformer.rope import RoPE
 from transformer.attn import scaled_dot_product_attn, MultiHeadSelfAttention
-from transformer.block import TransformerBlock
+from transformer.linear import Linear
+from transformer.embedding import Embedding
+from transformer.impl import TransformerBlock, TransformerLM
 
 import torch
 import torch.nn as nn
@@ -42,7 +43,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     linear = Linear(d_in, d_out)
-    nn.Module.load_state_dict(linear, {'W': weights})
+    linear.load_state_dict({'weight': weights})
 
     return linear(in_features)
 
@@ -95,10 +96,10 @@ def run_swiglu(
         Float[Tensor, "... d_model"]: Output embeddings of the same shape as the input embeddings.
     """
     swiglu = SwiGLU(d_model, d_ff)
-    nn.Module.load_state_dict(swiglu, {
-        'W1.W': w1_weight,
-        'W2.W': w2_weight,
-        'W3.W': w3_weight,
+    swiglu.load_state_dict({
+        'w1.weight': w1_weight,
+        'w2.weight': w2_weight,
+        'w3.weight': w3_weight,
     })
 
     return swiglu(in_features)
@@ -157,11 +158,11 @@ def run_multihead_self_attention(
         implementation with the given QKV projection weights and input features.
     """
     mha = MultiHeadSelfAttention(d_model, num_heads)
-    nn.Module.load_state_dict(mha, {
-        'W_q': q_proj_weight,
-        'W_k': k_proj_weight,
-        'W_v': v_proj_weight,
-        'W_o': o_proj_weight,
+    mha.load_state_dict({
+        'q_proj': q_proj_weight,
+        'k_proj': k_proj_weight,
+        'v_proj': v_proj_weight,
+        'output_proj': o_proj_weight,
     })
 
     return mha(in_features, causual=True)
@@ -207,13 +208,13 @@ def run_multihead_self_attention_with_rope(
     rope = RoPE(theta=theta, d_k=d_model // num_heads, max_seq_len=max_seq_len, device=in_features.device)
     mha = MultiHeadSelfAttention(d_model, num_heads, rope=rope)
     nn.Module.load_state_dict(mha, {
-        'W_q': q_proj_weight,
-        'W_k': k_proj_weight,
-        'W_v': v_proj_weight,
-        'W_o': o_proj_weight,
+        'q_proj': q_proj_weight,
+        'k_proj': k_proj_weight,
+        'v_proj': v_proj_weight,
+        'output_proj': o_proj_weight,
     })
 
-    return mha(in_features, causal=True)
+    return mha(in_features, causual=True)
 
 
 def run_rope(
@@ -238,6 +239,10 @@ def run_rope(
     rope = RoPE(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
     return rope(in_query_or_key, token_positions)
 
+def prepocess_weights_dict(
+    weights: dict[str, Tensor],
+) -> dict[str, Tensor]:
+    return {key.replace('_proj.weight', '_proj'): value for key, value in weights.items()}
 
 def run_transformer_block(
     d_model: int,
@@ -309,18 +314,14 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    block = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta)
-    block.attn.W_k = torch.nn.Parameter(weights['attn.k_proj.weight'])
-    block.attn.W_q = torch.nn.Parameter(weights['attn.q_proj.weight'])
-    block.attn.W_v = torch.nn.Parameter(weights['attn.v_proj.weight'])
-    block.attn.W_o = torch.nn.Parameter(weights['attn.output_proj.weight'])
-    block.norm1.gain = torch.nn.Parameter(weights['ln1.weight'])
-    block.ff.W1.W = torch.nn.Parameter(weights['ffn.w1.weight'])
-    block.ff.W2.W = torch.nn.Parameter(weights['ffn.w2.weight'])
-    block.ff.W3.W = torch.nn.Parameter(weights['ffn.w3.weight'])
-    block.norm2.gain = torch.nn.Parameter(weights['ln2.weight'])
+    block = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, dtype=in_features.dtype, device=in_features.device)
+    processed_dict = prepocess_weights_dict(weights=weights)
+    block.load_state_dict(processed_dict)
     return block(in_features)
 
+
+
+    
 
 def run_transformer_lm(
     vocab_size: int,
@@ -401,7 +402,21 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    model = TransformerLM(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        d_model=d_model,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=rope_theta,
+        device=in_indices.device,
+        dtype=torch.float32,
+    )
+    processed_dict = prepocess_weights_dict(weights=weights)
+    model.load_state_dict(processed_dict)
+
+    return model(in_indices)
 
 
 def run_rmsnorm(
@@ -425,7 +440,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rmsnorm = RMSNorm(d_model, eps)
-    nn.Module.load_state_dict(rmsnorm, {'gain': weights})
+    nn.Module.load_state_dict(rmsnorm, {'weight': weights})
 
     return rmsnorm(in_features)
 
