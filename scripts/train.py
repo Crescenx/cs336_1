@@ -173,7 +173,7 @@ def main(cfg: DictConfig) -> None:
 
         if (iteration + 1) % cfg.run.checkpointing.save_interval == 0:
             save_checkpoint(
-                dst=checkpoint_dir / f"iter_{iteration + 1}.pt",
+                out=checkpoint_dir / f"iter_{iteration + 1}.pt",
                 model=model,
                 optimizer=optimizer,
                 iteration=iteration,
