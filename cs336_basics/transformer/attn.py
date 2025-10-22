@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import einx
 
-from transformer.rope import RoPE
+from cs336_basics.transformer.rope import RoPE
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     x_max = torch.max(x, dim=dim, keepdim=True).values
@@ -61,11 +61,7 @@ class MultiHeadSelfAttention(nn.Module):
         seq_len = x.shape[-2]
 
         W_qkv = torch.stack((self.q_proj, self.k_proj, self.v_proj), dim=0) # (3, d_model, d_model)
-        QKV = einx.rearrange(
-            "... seq_len three (h d_k) -> ... three h seq_len d_k",
-            einx.dot("... seq_len d_model, three hd_k d_model -> ... seq_len three hd_k", x, W_qkv),
-            h=self.num_heads,
-        )
+        QKV = einx.dot("... seq_len d_model, three (h d_k) d_model -> ... three h seq_len d_k", x, W_qkv, h=self.num_heads)
         Q, K, V = QKV.unbind(dim=-4) # each is (... num_heads seq_len d_k)
         
 

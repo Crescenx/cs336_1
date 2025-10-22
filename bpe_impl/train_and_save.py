@@ -1,91 +1,86 @@
 from __future__ import annotations
 
-import argparse
-import pickle  # 导入 pickle 模块
+import pickle
+import time
 from pathlib import Path
 
+# 假设你的 BPE 训练函数位于此路径
+# 请根据你的项目结构进行调整
 from bpe_impl.bpe_train import train_bpe
-import time
 
-
+# --- 配置区 ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "owt_train.txt"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "bpe_impl" / "artifacts"
-DEFAULT_SPECIAL_TOKEN = "<|endoftext|>"
+DATA_DIR = PROJECT_ROOT / "data"
 
-# 以下辅助函数不再需要，因为 pickle 可以直接处理 bytes
-# def encode_bytes(value: bytes) -> str:
-# def serialize_vocab(vocab: dict[int, bytes]) -> dict[str, str]:
-# def serialize_merges(merges: list[tuple[bytes, bytes]]) -> list[list[str]]:
+# 定义要为其训练分词器的数据集
+# 脚本会为列表中的每个字符串寻找 `data/{run_str}_train.txt` 文件
+RUNS = ["tinystories", "owt"]
 
+# BPE 训练参数
+# 为不同数据集设置不同的词表大小
+VOCAB_SIZES = {
+    "tinystories": 10000,
+    "owt": 32000,
+}
+SPECIAL_TOKENS = ["<|endoftext|>"]
+
+# --- 脚本主逻辑 ---
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train BPE on TinyStories and dump artifacts.")
-    parser.add_argument(
-        "--input-path",
-        type=Path,
-        default=DEFAULT_INPUT_PATH,
-        help="Path to the TinyStories training corpus.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help="Directory for the serialized tokenizer artifacts.",
-    )
-    parser.add_argument(
-        "--vocab-size",
-        type=int,
-        default=32000,
-        help="Target vocabulary size, including special tokens.",
-    )
-    parser.add_argument(
-        "--extra-special-token",
-        action="append",
-        dest="extra_special_tokens",
-        default=[],
-        help="Additional special tokens to include without splitting.",
-    )
-    args = parser.parse_args()
-
-    input_path = args.input_path.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    """
+    主函数，为配置区中定义的所有数据集自动训练 BPE 分词器。
+    """
+    # 为 BPE artifacts 创建输出目录
+    output_dir = DATA_DIR / "artifacts_tokenizer"
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"BPE artifacts will be saved to: {output_dir}")
 
-    special_tokens = [DEFAULT_SPECIAL_TOKEN]
-    for token in args.extra_special_tokens:
-        if token not in special_tokens:
-            special_tokens.append(token)
+    for run_str in RUNS:
+        print(f"\n{'='*20} Processing dataset: {run_str.upper()} {'='*20}")
 
-    start_time = time.time()
-    # 训练 BPE，获取词汇表和合并规则
-    vocab, merges = train_bpe(
-        input_path=input_path,
-        vocab_size=args.vocab_size,
-        special_tokens=special_tokens,
-    )
-    end_time = time.time()
-    elapsed = end_time - start_time
-    minutes = int(elapsed // 60)
-    seconds = elapsed % 60
-    print(f"Training completed in {minutes}m {seconds:.2f}s.")
+        input_path = DATA_DIR / f"{run_str}_train.txt"
+        
+        # 检查训练文件是否存在
+        if not input_path.exists():
+            print(f"⚠️ Training file not found, skipping: {input_path}")
+            continue
+            
+        # 获取当前数据集特定的词表大小，如果未指定则使用默认值
+        vocab_size = VOCAB_SIZES.get(run_str, 10000)
 
-    # 定义输出文件路径，使用 .pkl 后缀
-    vocab_path = output_dir / "owt_vocab.pkl"
-    merges_path = output_dir / "owt_merges.pkl"
+        print(f"Starting BPE training for '{run_str}' with vocab size {vocab_size} from source: {input_path}")
+        
+        start_time = time.perf_counter()
+        
+        # 训练 BPE，获取词汇表和合并规则
+        vocab, merges = train_bpe(
+            input_path=input_path,
+            vocab_size=vocab_size,
+            special_tokens=SPECIAL_TOKENS,
+        )
+        
+        duration = time.perf_counter() - start_time
+        print(f"✅ Training for '{run_str}' completed in {duration:.2f} seconds.")
 
-    # 使用 pickle 将 vocab 对象序列化到文件
-    print(f"Saving vocabulary to {vocab_path}...")
-    with vocab_path.open("wb") as f:
-        pickle.dump(vocab, f)
-    print("Vocabulary saved.")
+        # --- 保存 BPE artifacts ---
+        vocab_path = output_dir / f"{run_str}_vocab.pkl"
+        merges_path = output_dir / f"{run_str}_merges.pkl"
 
-    # 使用 pickle 将 merges 对象序列化到文件
-    print(f"Saving merges to {merges_path}...")
-    with merges_path.open("wb") as f:
-        pickle.dump(merges, f)
-    print("Merges saved.")
+        # 使用 pickle 将 vocab 对象序列化到文件
+        print(f"Saving vocabulary to {vocab_path}...")
+        with vocab_path.open("wb") as f:
+            pickle.dump(vocab, f)
+
+        # 使用 pickle 将 merges 对象序列化到文件
+        print(f"Saving merges to {merges_path}...")
+        with merges_path.open("wb") as f:
+            pickle.dump(merges, f)
+            
+        print(f"Successfully saved artifacts for '{run_str}'.")
+
+    print(f"\n{'='*25} All datasets processed. {'='*25}")
 
 
 if __name__ == "__main__":
     main()
+

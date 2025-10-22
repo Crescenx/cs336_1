@@ -1,8 +1,7 @@
 import torch
 from torch import nn
-import einx
 
-from transformer.linear import Linear
+from cs336_basics.transformer.linear import Linear
 
 class SiLU(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:

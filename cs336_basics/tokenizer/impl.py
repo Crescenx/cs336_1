@@ -7,7 +7,7 @@ import heapq
 from typing import Iterable, Iterator
 import regex as re
 
-from tokenizer.linkedsq import LinkedSeq
+from cs336_basics.tokenizer.linkedsq import LinkedSeq
 
 GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 

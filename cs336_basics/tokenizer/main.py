@@ -1,4 +1,4 @@
-from tokenizer.impl import Tokenizer
+from cs336_basics.tokenizer.impl import Tokenizer
 from pathlib import Path
 import numpy as np
 import time  # 导入 time 库

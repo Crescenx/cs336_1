@@ -1,13 +1,13 @@
 import torch
 from torch import nn
 
-from transformer.attn import MultiHeadSelfAttention
-from transformer.rmsnorm import RMSNorm
-from transformer.swiglu import SwiGLU
-from transformer.rope import RoPE
+from cs336_basics.transformer.attn import MultiHeadSelfAttention
+from cs336_basics.transformer.rmsnorm import RMSNorm
+from cs336_basics.transformer.swiglu import SwiGLU
+from cs336_basics.transformer.rope import RoPE
 
-from transformer.embedding import Embedding
-from transformer.linear import Linear
+from cs336_basics.transformer.embedding import Embedding
+from cs336_basics.transformer.linear import Linear
 
 class TransformerBlock(nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int, theta: float, device=None, dtype=None):
