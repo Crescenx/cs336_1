@@ -14,6 +14,7 @@ class TransformerBlock(nn.Module):
         super().__init__()
 
         self.rope = RoPE(theta, d_model // num_heads, max_seq_len, device=device)
+        # self.rope = None
         self.attn = MultiHeadSelfAttention(d_model, num_heads, self.rope, device=device, dtype=dtype)
         self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
         self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)

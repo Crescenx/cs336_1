@@ -36,6 +36,9 @@ class Tokenizer:
             for token in self.special_tokens:
                 self._spec_automaton.add_word(token, token)
             self._spec_automaton.make_automaton()
+        
+        special_token_ids = [self.reverse_vocab[token.encode("utf-8")] for token in self.special_tokens if token.encode("utf-8") in self.reverse_vocab]
+        self.special_token_ids = set(special_token_ids)
 
     @classmethod
     def from_files(cls, vocab_path: str | os.PathLike, merges_path: str | os.PathLike, special_tokens: list[str] | None = None) -> "Tokenizer":
@@ -206,3 +209,4 @@ class Tokenizer:
             if bs is not None:
                 buf.extend(bs)
         return buf.decode("utf-8", errors="ignore")
+    

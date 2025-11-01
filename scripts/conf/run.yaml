@@ -1,15 +1,16 @@
 run:
-  type: "tiny"
-  total_token: 256
-  batch_size: 1
+  type: "owt"
+  total_token: 327680000
+  batch_size: 64
   use_cosine: true
   use_grad_clip: true
   load_checkpoint: false
-  device: "cpu"
-  eval_interval: 1
+  device: "cuda"
+  eval_interval: 500
+  time: "01:30:00"
   checkpointing:
-    save_interval: 1
-    path: "checkpoints/"
+    save_interval: -1
+    path: "checkpoints/owt/"
 model:
   vocab_size:
     tiny: 10000
@@ -21,14 +22,15 @@ model:
   num_heads: 16
   theta: 10000
 optimizer:
+  type: "Muon"
   lr: 0.001
   beta1: 0.9
   beta2: 0.95
   weight_decay: 0.01
   eps: 1e-8
   cosine:
-    max_lr: 0.001
-    min_lr: 0.0001
+    max_lr: 0.01
+    min_lr: 0.001
     warmup: 0.5
     cycles: 1.0
   grad_clip: 1.0
