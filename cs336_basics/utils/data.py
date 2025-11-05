@@ -7,7 +7,6 @@ import einx
 def get_batch(
     dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    length = len(dataset)
     data = torch.from_numpy(dataset)
     windows = data.unfold(0, context_length, 1)  # (N - context_length + 1, context_length)
     Xwindows = windows[:-1]  # (N - context_length, context_length)

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import einx
 
-from cs336_basics.transformer.rope import RoPE
+from cs336_basics.transformer.rope import RoPE, apply_rotary_pos_emb, RoPEBuf
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     x_max = torch.max(x, dim=dim, keepdim=True).values
@@ -79,3 +79,76 @@ class MultiHeadSelfAttention(nn.Module):
         out = einx.dot("... seq_len d_v, d_model d_v -> ... seq_len d_model", out, self.output_proj)
         return out
         
+
+class MultiHeadSelfAttentionRope(nn.Module):
+    def __init__(self, 
+                 d_model: int, 
+                 num_heads: int, 
+                 rotary_dim: int = 0,     
+                 max_seq_len: int = 4096, 
+                 rope_theta: float = 10000.0, 
+                 device=None, 
+                 dtype=None):
+        
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+
+        self.q_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.k_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.v_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+        self.output_proj = nn.Parameter(torch.empty((d_model, d_model), device=device, dtype=dtype))
+
+        self.rotary_dim = rotary_dim 
+        
+        if self.rotary_dim > 0:
+            if self.rotary_dim > self.d_k:
+                raise ValueError(f"rotary_dim ({rotary_dim}) cannot be larger than head dimension d_k ({self.d_k})")
+            if self.rotary_dim % 2 != 0:
+                raise ValueError("rotary_dim must be an even number.")
+                
+            self.rope = RoPEBuf(
+                rotary_dim=self.rotary_dim,
+                max_seq_len=max_seq_len,
+                theta=rope_theta,
+                device=device,
+                dtype=dtype
+            )
+        else:
+            self.rope = None
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.trunc_normal_(self.q_proj, std=0.02)
+        nn.init.trunc_normal_(self.k_proj, std=0.02)
+        nn.init.trunc_normal_(self.v_proj, std=0.02)
+        nn.init.trunc_normal_(self.output_proj, std=0.02)
+
+    def forward(self, x: torch.Tensor, causal: bool=False) -> torch.Tensor:
+
+        
+        seq_len = x.shape[-2]
+
+        W_qkv = torch.stack((self.q_proj, self.k_proj, self.v_proj), dim=0) 
+        QKV = einx.dot("... seq_len d_model, three (h d_k) d_model -> ... three h seq_len d_k", x, W_qkv, h=self.num_heads)
+        Q, K, V = QKV.unbind(dim=-4) # each is (... num_heads seq_len d_k)
+        
+        if self.rope is not None:
+            token_positions = torch.arange(seq_len, device=x.device)
+            cos, sin = self.rope(token_positions)
+            
+            Q = apply_rotary_pos_emb(Q, cos, sin)
+            K = apply_rotary_pos_emb(K, cos, sin)
+
+        # Causal mask attn
+        if causal:
+            mask = torch.ones(1, 1, seq_len, seq_len, dtype=torch.bool, device=x.device).tril(diagonal=0)
+            out = scaled_dot_product_attn(Q, K, V, mask=mask)
+        else:
+            out = scaled_dot_product_attn(Q, K, V, mask=None)
+            
+        out = einx.rearrange("... num_heads seq_len d_k -> ... seq_len (num_heads d_k)", out)
+        out = einx.dot("... seq_len d_v, d_model d_v -> ... seq_len d_model", out, self.output_proj)
+        return out

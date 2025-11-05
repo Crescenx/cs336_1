@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import math
 
-from cs336_basics.transformer.impl import TransformerLM
+from cs336_basics.transformer.impl import TransformerLM, TransformerLMRope
 from cs336_basics.utils.data import get_batch
 from cs336_basics.utils.loss import cross_entropy_loss
 from cs336_basics.utils.optimizer import AdamW, cosine_lr_schedule, gradient_clipping, MuonWithAuxAdamW
@@ -72,7 +72,7 @@ def build_model(cfg: DictConfig, device: torch.device) -> TransformerLM:
         vocab_size = cfg.model.vocab_size.owt
     else:
         raise ValueError(f"Unknown run type: {cfg.type}")
-    return TransformerLM(
+    return TransformerLMRope(
         vocab_size=vocab_size,
         context_length=cfg.model.context_length,
         d_model=cfg.model.d_model,
@@ -80,6 +80,7 @@ def build_model(cfg: DictConfig, device: torch.device) -> TransformerLM:
         num_heads=cfg.model.num_heads,
         d_ff=cfg.model.d_ff,
         rope_theta=cfg.model.theta,
+        rotary_dim=16,
         device=device,
         dtype=torch.float32,
     )
